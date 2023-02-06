@@ -1,0 +1,5 @@
+".\Objects\STARTUP.obj",
+".\Objects\iic.obj",
+".\Objects\电压测量与存储器.obj" 
+TO ".\Objects\电压测量与存储器" 
+PRINT(".\Listings\电压测量与存储器.m51") RAMSIZE(256) 

@@ -1,0 +1,281 @@
+C51 COMPILER V9.56.0.0   ________________                                                  02/06/2023 09:35:12 PAGE 1   
+
+
+C51 COMPILER V9.56.0.0, COMPILATION OF MODULE ________________
+OBJECT MODULE PLACED IN .\Objects\电压测量与存储器.obj
+COMPILER INVOKED BY: D:\keil-5\C51\BIN\C51.EXE 电压测量与存储器.c OPTIMIZE(8,SPEED) BROWSE DEBUG OBJECTEXTEND PRINT(.\Li
+                    -stings\电压测量与存储器.lst) TABS(2) OBJECT(.\Objects\电压测量与存储器.obj)
+
+line level    source
+
+   1          #include <STC15F2K60S2.h>
+   2          #include <intrins.h>
+   3          #include <iic.h>
+   4          #define uint unsigned int
+   5          #define uchar unsigned char
+   6          
+   7          uchar code t_display[]={ //   0    1    2    3    4    5    6    7    8    9    A    B    C    D    E    F
+   8              0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F, 0x77, 0x7C, 0x39, 0x5E, 0x79, 0x71,
+   9              //black  -     H    J    K    L    N    o   P    U     t    G    Q    r   M    y
+  10              0x00, 0x40, 0x76, 0x1E, 0x70, 0x38, 0x37, 0x5C, 0x73, 0x3E, 0x78, 0x3d, 0x67, 0x50, 0x37, 0x6e,
+  11              0xBF, 0x86, 0xDB, 0xCF, 0xE6, 0xED, 0xFD, 0x87, 0xFF, 0xEF, 0x46};         //0. 1. 2. 3. 4. 5. 6. 7. 8
+             -. 9. -1
+  12          uchar code t_address[]={0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80};//位选
+  13          uchar table[8]={16,16,16,16,16,16,16,16};
+  14          uchar Trg,Cont;
+  15          uchar mode;
+  16          uint count,err;
+  17          uint AD;
+  18          uchar Vp;
+  19          uchar key_flag,read_flag,led_flag;
+  20          uint temp;
+  21          
+  22          //初始关闭继电器蜂鸣器
+  23          void init() {
+  24   1        P2=0xa0;P0=0;P2=0x00;
+  25   1        P2=0x80;P0=0xff;P2=0x00;
+  26   1      }
+  27          
+  28          void Timer0Init(void)   //1毫秒@11.0592MHz
+  29          {
+  30   1        AUXR |= 0x80;   //定时器时钟1T模式
+  31   1        TMOD &= 0xF0;   //设置定时器模式
+  32   1        TL0 = 0xCD;   //设置定时初值
+  33   1        TH0 = 0xD4;   //设置定时初值
+  34   1        TF0 = 0;    //清除TF0标志
+  35   1        TR0 = 1;    //定时器0开始计时
+  36   1        ET0=1;
+  37   1        EA=1;
+  38   1      }
+  39          
+  40          void Timer1Init(void)   //1毫秒@11.0592MHz
+  41          {
+  42   1        AUXR |= 0x40;   //定时器时钟1T模式
+  43   1        TMOD &= 0x0F;   //设置定时器模式
+  44   1        TL1 = 0xCD;   //设置定时初值
+  45   1        TH1 = 0xD4;   //设置定时初值
+  46   1        TF1 = 0;    //清除TF1标志
+  47   1        TR1 = 1;    //定时器1开始计时
+  48   1        ET1=1;
+  49   1      }
+  50          
+  51          //矩阵键盘三行代码
+  52          void key_read()
+  53            {
+C51 COMPILER V9.56.0.0   ________________                                                  02/06/2023 09:35:12 PAGE 2   
+
+  54   1          uchar keypress,ReadData;
+  55   1          P3=0xf0;
+  56   1          P42=1;P44=1;
+  57   1          P36=P42;
+  58   1          P37=P44;
+  59   1          keypress=P3 & 0xf0;//暂存行值
+  60   1          P3=0x0f;
+  61   1          P42=0;P44=0;
+  62   1          ReadData=(P3|keypress)^0xff;
+  63   1          Trg=ReadData&(ReadData^Cont);
+  64   1          Cont=ReadData;
+  65   1      }
+  66          
+  67          void time_0() interrupt 1
+  68          {
+  69   1        static uint i,smg_count,key_count,read_count;
+  70   1        if(++smg_count>=2)  //动态显示
+  71   1        {
+  72   2          smg_count=0;
+  73   2          P2=0xc0;P0=0x00;P2=0x00;
+  74   2          P2=0xe0;P0=~t_display[table[i]];P2=0x00;
+  75   2          P2=0xc0;P0=t_address[i];P2=0x00;
+  76   2          if(++i>=8)
+  77   2            i=0;
+  78   2        }
+  79   1        if(++key_count>=10) //按键检测
+  80   1        {
+  81   2          key_count=0;
+  82   2          key_flag=1;
+  83   2        }
+  84   1        if(++read_count>=100) //存储器读取
+  85   1        {
+  86   2          read_count=0;
+  87   2          read_flag=1;
+  88   2        }
+  89   1      }
+  90          
+  91          void time_1() interrupt 3 //L1灯状态触发条件判断
+  92          {
+  93   1        static uint time_count;
+  94   1        if(AD<Vp*10)
+  95   1        {
+  96   2          time_count++;
+  97   2          if(time_count>=5000)
+  98   2            led_flag=1;
+  99   2        }
+ 100   1        else
+ 101   1        {
+ 102   2          time_count=0;
+ 103   2          led_flag=0;
+ 104   2        }
+ 105   1      }
+ 106          
+ 107          void Led_123()  //LED灯的显示处理
+ 108          {
+ 109   1        if(led_flag==1)
+ 110   1        {P2 = 0x80;P0 = 0xfe;P2 = 0x00;}
+ 111   1        else
+ 112   1          {P2 = 0x80;P0 = 0xff;P2 = 0x00;}
+ 113   1        
+ 114   1        if(err>=3)
+ 115   1          {P2 = 0x80;P0 = 0xfb;P2 = 0x00;}
+C51 COMPILER V9.56.0.0   ________________                                                  02/06/2023 09:35:12 PAGE 3   
+
+ 116   1        else
+ 117   1          {P2 = 0x80;P0 = 0xff;P2 = 0x00;}
+ 118   1        
+ 119   1        if(count%2==1)
+ 120   1        {P2 = 0x80;P0 = 0xfd;P2 = 0x00;}
+ 121   1        else
+ 122   1        {P2 = 0x80;P0 = 0xff;P2 = 0x00;}
+ 123   1      }
+ 124          
+ 125          void Count_num()    //判断计数的触发条件
+ 126          {
+ 127   1        static uchar state;
+ 128   1        switch(state)
+ 129   1        {
+ 130   2          case 0:
+ 131   2            if(AD>Vp*10)
+ 132   2            {
+ 133   3              state=1;
+ 134   3            }
+ 135   2            break;
+ 136   2          case 1:
+ 137   2            if(AD<=Vp*10)
+ 138   2            {
+ 139   3              count++;
+ 140   3              state=0;
+ 141   3            }
+ 142   2            break;
+ 143   2        }
+ 144   1      }
+ 145          
+ 146          void main()
+ 147          {
+ 148   1        init();
+ 149   1        AD_Init();
+ 150   1        Vp=read_24C02(0);
+ 151   1        AD_Get();
+ 152   1        Timer0Init();
+ 153   1        Timer1Init();
+ 154   1        while(1)
+ 155   1        {
+ 156   2          if(key_flag==1)
+ 157   2          {
+ 158   3            key_flag=0;
+ 159   3            Count_num();
+ 160   3            key_read();
+ 161   3              if(Trg==0x28) //S12-改状态
+ 162   3              {
+ 163   4                err=0;
+ 164   4                mode++;
+ 165   4                if(mode==2)
+ 166   4                  write_24C02(0,Vp);
+ 167   4                if(mode>=3)
+ 168   4                  mode=0;
+ 169   4              }
+ 170   3              if(Trg==0x24) //S13-清0
+ 171   3              {
+ 172   4                if(mode==2)
+ 173   4                {
+ 174   5                  err=0;
+ 175   5                  count=0;
+ 176   5                }
+ 177   4                else
+C51 COMPILER V9.56.0.0   ________________                                                  02/06/2023 09:35:12 PAGE 4   
+
+ 178   4                {
+ 179   5                  err++;
+ 180   5                }
+ 181   4              }
+ 182   3              if(Trg==0x18) //S16-加法
+ 183   3              {
+ 184   4                if(mode==1)
+ 185   4                {
+ 186   5                  err=0;
+ 187   5                  Vp=Vp+5;
+ 188   5                  if(Vp>50)
+ 189   5                    Vp=0;
+ 190   5                }
+ 191   4                else
+ 192   4                {
+ 193   5                  err++;
+ 194   5                }
+ 195   4              }
+ 196   3              if(Trg==0x14) //S17-减法
+ 197   3              {
+ 198   4                if(mode==1)
+ 199   4                {
+ 200   5                  err=0;
+ 201   5                  Vp=Vp-5;
+ 202   5                  if(Vp<0||Vp>50) //<0之后其实值大于50.所以有两个条件
+ 203   5                    Vp=50;
+ 204   5                }
+ 205   4                else
+ 206   4                {
+ 207   5                  err++;
+ 208   5                }
+ 209   4              }
+ 210   3            }
+ 211   2            if(read_flag==1)  //取电压值
+ 212   2            {
+ 213   3              read_flag=0;
+ 214   3              EA=0;
+ 215   3              temp=AD_Get();
+ 216   3              EA=1;
+ 217   3              AD=temp/255.0*500;
+ 218   3            }
+ 219   2            
+ 220   2            switch(mode)  //不同模式下的显示
+ 221   2            {
+ 222   3              case 0:
+ 223   3                table[0]=25;
+ 224   3                table[1]=table[2]=table[3]=table[4]=16;
+ 225   3                table[5]=AD/100+32;
+ 226   3                table[6]=AD%100/10;
+ 227   3                table[7]=AD%10;
+ 228   3                break;
+ 229   3              case 1:
+ 230   3                table[0]=24;
+ 231   3                table[1]=table[2]=table[3]=table[4]=16;
+ 232   3                table[5]=Vp/10+32;
+ 233   3                table[6]=Vp%10;
+ 234   3                table[7]=0;
+ 235   3                break;
+ 236   3              case 2:
+ 237   3                table[0]=22;
+ 238   3                table[1]=table[2]=16;
+ 239   3                table[3]=(count/10000==0)?16:count/10000;
+C51 COMPILER V9.56.0.0   ________________                                                  02/06/2023 09:35:12 PAGE 5   
+
+ 240   3                table[4]=(count%10000/1000==0)?16:count%10000/1000;
+ 241   3                table[5]=(count%1000/100==0)?16:count%1000/100;
+ 242   3                table[6]=(count%100/10==0)?16:count%100/10;
+ 243   3                table[7]=count%10;
+ 244   3                break;
+ 245   3            }
+ 246   2            Led_123();  //LED灯状态判断
+ 247   2          }
+ 248   1        }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    978    ----
+   CONSTANT SIZE    =     51    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =     34    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)
